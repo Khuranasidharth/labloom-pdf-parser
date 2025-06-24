@@ -1,44 +1,66 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import fitz  # PyMuPDF
-import re
-from typing import List, Optional
+from fastapi.responses import JSONResponse
+import shutil
+import os
 
 app = FastAPI()
 
-# Allow CORS (so Supabase Edge Function can call it)
+# Allow all CORS (adjust for production as needed)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
-@app.post("/parse")
+@app.post("/parse-pdf")
 async def parse_pdf(file: UploadFile = File(...)):
-    contents = await file.read()
-    doc = fitz.open(stream=contents, filetype="pdf")
-    text = ""
-    for page in doc:
-        text += page.get_text()
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
 
-    tests = []
-    for match in re.finditer(r"([A-Za-z ()]+?)\s+(\d+\.?\d*)\s+([a-zA-Z%/^\dµ]+)\s+(\d+\.?\d*\s*-\s*\d+\.?\d*)", text):
-        tests.append({
-            "name": match.group(1).strip(),
-            "value": match.group(2),
-            "unit": match.group(3),
-            "reference_range": match.group(4)
-        })
+    try:
+        # Save file to temporary path
+        temp_path = f"/tmp/{file.filename}"
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-    return {
-        "report_type": "General",
-        "tests": tests,
-        "summary": text[:200] + "...",
-        "metadata": {
-            "filename": file.filename,
-            "pages": len(doc),
-            "extraction_quality": "good"
+        # TODO: Replace this with real parsing logic
+        result = {
+            "report_type": "CBC",
+            "tests": [
+                {
+                    "name": "Hemoglobin",
+                    "value": "14.2",
+                    "unit": "g/dL",
+                    "reference_range": "13.0 - 17.0"
+                },
+                {
+                    "name": "White Blood Cells",
+                    "value": "7.5",
+                    "unit": "10^3/µL",
+                    "reference_range": "4.5 - 11.0"
+                },
+                {
+                    "name": "Total Cholesterol",
+                    "value": "220",
+                    "unit": "mg/dL",
+                    "reference_range": "125 - 200"
+                }
+            ],
+            "summary": "Mock result from PDF parser",
+            "metadata": {
+                "filename": file.filename,
+                "pages": 2,
+                "extraction_quality": "good"
+            }
         }
-    }
+
+        # Clean up temp file
+        os.remove(temp_path)
+
+        return JSONResponse(content=result)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse file: {str(e)}")
